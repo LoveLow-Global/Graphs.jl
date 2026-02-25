@@ -287,7 +287,7 @@ function _diameter_weighted_directed(
             end
         end
 
-        lb > 2 * d_prev && break
+        lb >= 2 * d_prev && break
     end
 
     return lb
@@ -300,28 +300,42 @@ function _diameter_weighted_undirected(
     U = eltype(g)
     u = U(argmax(degree(g)))
 
-    # Compute base trees
-    dists = dijkstra_shortest_paths(g, u, distmx).dists
+    # Compute forward and backward distance trees from hub.
+    # For undirected graphs with asymmetric weight matrices (distmx[i,j] != distmx[j,i]),
+    # d(u,v) != d(v,u), so we need both directions to correctly bound eccentricities.
+    distmx_t = permutedims(distmx)
+    dists_fwd = dijkstra_shortest_paths(g, u, distmx).dists
+    dists_bwd = dijkstra_shortest_paths(g, u, distmx_t).dists
 
-    if maximum(dists) == typemax(T)
+    if maximum(dists_fwd) == typemax(T) || maximum(dists_bwd) == typemax(T)
         return typemax(T)
     end
 
     # Group fringes and initialize lower bound
-    unique_dists = sort!(unique(dists))
-    lb = maximum(dists)
+    unique_dists = sort!(unique(vcat(dists_fwd, dists_bwd)))
+    lb = max(maximum(dists_fwd), maximum(dists_bwd))
 
-    fringe = Dict{T,Vector{Int}}()
+    fringe_fwd = Dict{T,Vector{Int}}()
+    fringe_bwd = Dict{T,Vector{Int}}()
+
     @inbounds for v in vertices(g)
-        push!(get!(fringe, dists[v], Int[]), v)
+        push!(get!(fringe_fwd, dists_fwd[v], Int[]), v)
+        push!(get!(fringe_bwd, dists_bwd[v], Int[]), v)
     end
 
     for i in length(unique_dists):-1:2
         d_i = unique_dists[i]
         d_prev = unique_dists[i - 1]
 
-        if haskey(fringe, d_i)
-            for v in fringe[d_i]
+        if haskey(fringe_fwd, d_i)
+            for v in fringe_fwd[d_i]
+                ds = dijkstra_shortest_paths(g, U(v), distmx_t)
+                lb = max(lb, maximum(ds.dists))
+            end
+        end
+
+        if haskey(fringe_bwd, d_i)
+            for v in fringe_bwd[d_i]
                 ds = dijkstra_shortest_paths(g, U(v), distmx)
                 lb = max(lb, maximum(ds.dists))
             end
